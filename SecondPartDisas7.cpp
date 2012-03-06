@@ -413,7 +413,7 @@ void PE_Reader::PE_LoadForDynamicAnalise(char* &buf, int& len, int & start){
 	PE_ObjectTable();
 	start=entry_point_rva-text_address_rva+text_offset;
 	//start=text_offset;
-	start=start-4;
+	start=start-2;
 	printf("Physical_entry_point!!!=%d\n", start);
 
 	int file_size;
@@ -616,10 +616,14 @@ public:
 	~PolyUnpack();
 	int Examine(char* string);
 	void AddInstruction(InstructionList* &, char*,  int, bool );
+	void FindFirstInstruction(InstructionList* &);
+	void FindInstruction(InstructionList* &, int);
 	void StaticAnalise(int,char*,char*,char*);
 	//void LibdasmFunctions(INSTRUCTION&, char*, int, char* &);
 	void DynamicAnalise(int,char*,char*,char*);
-	bool Compare(char* &, int);
+	int Compare(InstructionList* &, char* &, int, int); //1 is true 
+												   //-1 is false
+												   //0 is unknown in case of jmp
 };
 
 PolyUnpack::PolyUnpack(){
@@ -796,13 +800,13 @@ void PolyUnpack::StaticAnalise(int Argc, char* FileName, char* Argv2=NULL, char*
 	p1=start;
 	int kol_instructions=0;
 	while(p1!=NULL){
-		printf("%x ", p1->number);
+		printf("%0x    ", p1->number);
 		printf("%s\n",p1->instruction);
 		p1=p1->pointer;
 		kol_instructions++;
 	}
-	//cout<<"KOL_INSTRUCTIONS="<<kol_instructions<<endl;
 	*/
+	//cout<<"KOL_INSTRUCTIONS="<<kol_instructions<<endl;
 }
 
 /*
@@ -904,8 +908,9 @@ void PolyUnpack::DynamicAnalise(int Argc, char* FileName, char* Argv2=NULL, char
 
 	INSTRUCTION inst;	// declare struct INSTRUCTION
 	INSTRUCTION* inst_pointer=NULL;
+	InstructionList* p=start;
 	int i=0;
-	int k=n, c = 0, bytes=8, format = FORMAT_INTEL, size=0, len=0;
+	int k=n, c = 0, bytes=8, format = FORMAT_INTEL, size=0, len=0, flag=1;
 	char* string;
 	int string_size=256;
 	string=(char*)malloc(sizeof(char)*string_size);
@@ -941,7 +946,7 @@ void PolyUnpack::DynamicAnalise(int Argc, char* FileName, char* Argv2=NULL, char
 		raw_data[i]='\0';
 	}
 	
-	for(int kol=0;kol<100;kol++){
+	for(int kol=0;kol<30000;kol++){
 		//printf("EIP=%d\n", emulator.get_register(reg));
 		//if(emulator.step()){
 			emulator.step();
@@ -981,7 +986,11 @@ void PolyUnpack::DynamicAnalise(int Argc, char* FileName, char* Argv2=NULL, char
 			inst_pointer=&inst;
 			get_instruction_string(inst_pointer, Format(format), (DWORD)c, string, string_size);
 			printf("%s\n", string);
-			Compare(string, kol);
+			flag=Compare(p, string, kol, flag);
+			if(flag==-1){
+				printf("THIS IS VIRUS\n");
+				exit(101);
+			}
 			for (int i=0; i<string_size; i++)
 				string[i]='\0';
 			for (int i=0; i<command_size; i++)
@@ -994,14 +1003,147 @@ void PolyUnpack::DynamicAnalise(int Argc, char* FileName, char* Argv2=NULL, char
 	cout<<"***************"<<endl;
 	//****************************************************************
 }
- 
-bool PolyUnpack::Compare(char* & command, int kol){
-	 if (kol==0){
-		 //FindFirstInstruction();
-	 }
+
+void PolyUnpack::FindFirstInstruction(InstructionList* & p){
+	InstructionList* point=start;
+	while(!point->first){
+		point=point->pointer;
+	}
+	p=point;
+} 
+
+void PolyUnpack::FindInstruction(InstructionList* & p, int number){
+	InstructionList* point=start;
+	while((point->number!=number)&&(point->pointer!=NULL)){
+		point=point->pointer;
+	}
+	p=point;
 }
 
+bool compare(char* string1, const char* string2){
+	int i=0;
+	while((string1[i]!='\0')&&(string2[i]!='\0')){
+		if (string1[i]!=string2[i])
+			return false;
+		i++;
+	}
+	return true;
+}
 
+int GetNumber(char* string){
+	int koef=16;
+	int number=0;
+	int i=0;
+	while(string[i]!='\0'){
+		if ((string[i]>='0')&&(string[i]<='9')){
+			//printf("$%d\n", string[i]-'0');
+			number=number*koef+(string[i]-'0');
+		}
+		else{
+			//printf("$%d\n", string[i]-'a'+10);
+			number=number*koef+(string[i]-'a'+10);
+		}
+		i++;
+	}
+	return number;
+}
+ 
+int PolyUnpack::Compare(InstructionList* &p, char* & command, int kol, int flag){
+	 if (kol==0){
+		 FindFirstInstruction(p);	 
+	 }
+	 if (flag==0){
+		if (strcmp(p->pointer->instruction, command)==0){
+			p=p->pointer;
+			printf(" INSTRUCTION=%s\n", p->instruction);
+			printf(" COMMAND=%s\n", command);
+			p=p->pointer;
+			return 1;
+		}
+		else{
+			int i=0;
+			while(p->instruction[i]!=' ')
+				i++;
+			while(p->instruction[i]==' ')
+				i++;
+			int number=GetNumber(p->instruction+i+2);
+			//printf("NUMBER=%0x\n", number);
+			FindInstruction(p, number);
+			printf(" INSTRUCTION=%s\n", p->instruction);
+			printf(" COMMAND=%s\n", command);
+			if(strcmp(p->instruction, command)==0){
+				p=p->pointer;
+				return 1;
+			}
+			else{
+				return -1;
+			}
+		}
+	 }
+	 printf(" INSTRUCTION=%s\n", p->instruction);
+	 printf(" COMMAND=%s\n", command);
+	if ((compare(p->instruction,"jz"))||(compare(p->instruction,"jnz"))||
+		(compare(p->instruction,"jns"))||(compare(p->instruction,"jmp"))||
+		(compare(p->instruction,"jna"))||(compare(p->instruction,"jnc"))){
+		int i=0;
+		while(p->instruction[i]!=' ')
+			i++;
+		while(p->instruction[i]==' ')
+			i++;
+		int number=GetNumber(p->instruction+i+2);
+		printf("NUMBER=%0x\n", number); 
+			//FindInstruction(p, number);
+		//correct then
+		return 0;
+	 }
+	 else{
+		 if (compare(p->instruction,"call")){
+			int i=0;
+			while(p->instruction[i]!=' ')
+				i++;
+			while(p->instruction[i]==' ')
+				i++;
+			if (p->instruction[i]=='['){
+				p=p->pointer;
+				return 1;
+			}
+			else{
+				int number=GetNumber(p->instruction+i+2);
+				printf("NUMBER=%0x\n", number);
+				/*
+				int koef=16;
+				int number=0;
+				while(p->instruction[i+2]!='\0'){
+					printf("$%d\n", p->instruction[i+2]-'0');
+					if ((p->instruction[i+2]>='0')&&(p->instruction[i+2]<='9')){
+						number=number*koef+(p->instruction[i+2]-'0');
+					}
+					else{
+						number=number*koef+(p->instruction[i+2]-'a'+10);
+					}
+					i++;
+				}*/
+				FindInstruction(p, number);
+				//correct then
+				return 1;
+			}
+		}
+		else{
+			printf("WE ARE HERE\n");
+			printf(" INSTRUCTION=%s\n", p->instruction);
+			printf(" COMMAND=%s\n", command);
+			if (strcmp(p->instruction, command)==0){
+				p=p->pointer;
+				return 1;
+			}
+			else{
+				return -1;
+			}
+		}
+	}
+	printf("SOMETHING STRANGE COMMAND\n");
+	exit(99);
+}
 
 int main(int argc, char** argv){
 	try{
@@ -1011,6 +1153,7 @@ int main(int argc, char** argv){
 		PolyUnpack Unpack;
 		Unpack.StaticAnalise(argc, argv[1], argv[2], argv[3]);
 		Unpack.DynamicAnalise(argc, argv[1], argv[2], argv[3]);
+		printf("This file is valid\n");
 	}
 	catch(char* string1){
 		printf("Usage: %s <file> [-a|-i] [bytes]\n"
