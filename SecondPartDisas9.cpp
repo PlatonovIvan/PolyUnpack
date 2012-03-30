@@ -36,6 +36,7 @@ struct InstructionList{
 	int number;
 	int length;
 	bool first;
+	bool padding;
 	InstructionList* pointer;
 };
 
@@ -94,7 +95,7 @@ public:
 	PE_Reader(PE_Reader* pe_reader);
 	~PE_Reader();
 	void PE_LoadForStaticAnalise(char* &, int&, int&);
-	void PE_LoadForDynamicAnalise(char* &, int&, int&, int&, int&);
+	void PE_LoadForDynamicAnalise(char* &, int&, int&, int&);
 	void PE_Read(char* &, int&, int&);
 	void PE_HeaderOffset();
 	void PE_TableOffset();
@@ -163,7 +164,7 @@ PE_Reader::PE_Reader(char* name){
 		perror(filename);
 		//cout<<"Error: unable to open file: "<<filename<<'\n'<<endl;
         cout<<"This Error may be because of the symbols in file name!"<<endl;
-        exit(-1);
+        exit(1);
     }
 }
 
@@ -402,7 +403,7 @@ void PE_Reader::PE_LoadForStaticAnalise(char* &buf, int& len, int& start){
 	cout<<endl;
 };
 
-void PE_Reader::PE_LoadForDynamicAnalise(char* &buf, int& len, int & start, int & offset, int & base){	
+void PE_Reader::PE_LoadForDynamicAnalise(char* &buf, int& len, int & start, int & offset){	
 	//free(buf);// not need here
 	PE_HeaderOffset();
 	PE_TableOffset();
@@ -410,7 +411,6 @@ void PE_Reader::PE_LoadForDynamicAnalise(char* &buf, int& len, int & start, int 
 	PE_NumberOfEntries();
 	PE_EntryPoint();//not need in static analise
 	PE_ImageBase();//not need in static analise
-	base=image_base;
 	PE_ObjectTable();
 	start=entry_point_rva-text_address_rva+text_offset;
 	offset=text_offset;
@@ -479,7 +479,7 @@ void Reader::load(string name){
 	cout<<name<<endl;
 	filename=name;
 	cout<<filename<<endl;
-	getchar();
+	//getchar();
 	
 	if (indirect){
 		cout<<"INDIRECT TRUE"<<endl;
@@ -621,7 +621,8 @@ void Stack::Pop(int & a){
 	int kol=0;
 	if (start==NULL){
 		printf("Stack is empty! Don't know where to go!\n");
-		exit(33);
+		exit(0);
+		//exit(33);
 		return; 
 	}
 	while(p->pointer!=NULL){
@@ -645,15 +646,18 @@ private:
 	//Emulator_LibEmu emulator;
 	Stack return_addresses;
 	int prev_instr_len;
+	int buf_size;
 public:
 	PolyUnpack();
 	~PolyUnpack();
-	void AddInstruction(InstructionList* &, char*,  int, int, bool );
+	void AddInstruction(InstructionList* &, char*,  int, int, bool);
+	void FindPadding();
 	bool FindFirstInstruction(InstructionList* &);
-	void FindInstruction(InstructionList* &, int);
+	bool FindInstruction(InstructionList* &, int);
+	bool is_valid(int);
 	void StaticAnalise(char*, int);
 	void DynamicAnalise(char*, int);
-	int Compare(Emulator_LibEmu &, InstructionList* &, char* &, int, int); 
+	int Compare(Emulator_LibEmu &, InstructionList* &, char* &, int, int, uint); 
 												   //1 is true 
 												   //-1 is false
 												   //0 is unknown in case of jmp
@@ -665,6 +669,7 @@ PolyUnpack::PolyUnpack(){
 	start=NULL;
 	n=4;
 	prev_instr_len=0;
+	buf_size=0;
 }
 
 PolyUnpack::~PolyUnpack(){
@@ -704,8 +709,30 @@ void PolyUnpack::AddInstruction(InstructionList* &p1, char* string, int num, int
 	p1->number=num;
 	p1->length=length;
 	p1->first=flag;
+	p1->padding=false;
 	p1->pointer=NULL;
 }
+
+void PolyUnpack::FindPadding(){
+	InstructionList* p1=start;
+	InstructionList* p2=NULL;
+	while (p1!=NULL){
+		if (strcmp(p1->instruction, "add [eax],al")==0){
+			if (p2==NULL)
+				p2=p1;
+		}
+		else{
+			p2=NULL;
+		}
+		p1=p1->pointer;
+	}
+	p1=p2;
+	while (p1!=NULL){
+		p1->padding=true;
+		p1=p1->pointer;
+	}
+}
+
 
 void PolyUnpack::StaticAnalise(char* FileName, int key=0){
 	INSTRUCTION inst;	// declare struct INSTRUCTION
@@ -749,6 +776,10 @@ void PolyUnpack::StaticAnalise(char* FileName, int key=0){
 			c++;
 			continue;
 		}
+		
+		if (key==1)
+			printf("%.8x  ", c);
+		
 		if ((bytes)&&(key==1)){
 			for (i = 0; i < ((bytes) < (len) ? (bytes) : (len)); i++)
 				printf("%.2x", data[c + i]);
@@ -771,10 +802,9 @@ void PolyUnpack::StaticAnalise(char* FileName, int key=0){
 		inst_pointer=&inst;
 		get_instruction_string(inst_pointer, Format(FORMAT_INTEL), (DWORD)c, string, sizeof(string));
 		
-		if (key==1){
-			printf("%.8x  ", c);
+		if (key==1)
 			printf("%s\n", string);//need to be here!
-		}
+		
 		if((c+len)==entry_point)
 			prev_instr_len=len;
 		if (c==entry_point){
@@ -787,6 +817,7 @@ void PolyUnpack::StaticAnalise(char* FileName, int key=0){
 		c=c+len;
 	} 	
 	p1->pointer=NULL;
+	FindPadding();
 	printf("+++++++++++++++++++++++++++++++++++++++++++++\n");
 	/*
 	p1=start;
@@ -794,6 +825,9 @@ void PolyUnpack::StaticAnalise(char* FileName, int key=0){
 	while(p1!=NULL){
 		printf("%0x    ", p1->number);
 		printf("%s\n",p1->instruction);
+		if (p1->padding){
+			printf("True\n");
+		}
 		p1=p1->pointer;
 		kol_instructions++;
 	}
@@ -802,7 +836,6 @@ void PolyUnpack::StaticAnalise(char* FileName, int key=0){
 }
 
 void Emulator_LibEmu::begin(char* & buf, int & len, int & entry_point, int prev_instr_len){
-	
 	for (int i=0; i<8; i++) {
 		emu_cpu_reg32_set(cpu, (emu_reg32) i, 0);
 	}
@@ -915,8 +948,10 @@ bool PolyUnpack::FindFirstInstruction(InstructionList* & p){
 		if (point==NULL)
 			break;
 	}
-	if (point==NULL)
+	if (point==NULL){
+		p=NULL;
 		return false;
+	}
 	else{
 		p=point;
 		return true;
@@ -928,6 +963,8 @@ void PolyUnpack::DynamicAnalise(char* FileName, int key=0){
 	INSTRUCTION* inst_pointer=NULL;
 	InstructionList* p=start;
 	bool bad_parse=true;
+	bool valid_file=true;
+	int invalid_instr_kol=0;
 	int i=0;
 	int k=n, c = 0, bytes=8, size=0, len=0, flag=1;
 	char* string;
@@ -937,7 +974,7 @@ void PolyUnpack::DynamicAnalise(char* FileName, int key=0){
 	int position=0;
 	char* raw_data=(char*)malloc(raw_data_length);
 	char* raw_data2=NULL;
-	int command_size=10;//default was 10!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	int command_size=16;//default was 10!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	char* command=(char*)malloc(sizeof(char)*command_size);
 	for (int i=0; i<command_size; i++){
 		command[i]='\0';
@@ -945,33 +982,33 @@ void PolyUnpack::DynamicAnalise(char* FileName, int key=0){
 	Register reg=EIP;
 	Emulator_LibEmu emulator;
 	cout<<"Load Start"<<endl;
-	getchar();
+	//getchar();
 	char* buf;
-	int buf_size=0;
+	buf_size=0;
 	int entry_point=0;
-	getchar();
+	//getchar();
 	int ret_num=0;
 	PE_Reader reader(FileName);
 	int offset=0;
-	int base=0;
-	reader.PE_LoadForDynamicAnalise(buf, buf_size, entry_point, offset, base);
-	printf("base=%d\n", base);
-	getchar();
+	reader.PE_LoadForDynamicAnalise(buf, buf_size, entry_point, offset);
+	
+	//getchar();
 	
 	emulator.begin(buf, buf_size, entry_point, prev_instr_len);
 	if(!FindFirstInstruction(p)){
 		printf("Can't find First instruction\n");
-		exit(33);
+		//exit(33);
 	}
 	for (i=0; i<raw_data_length; i++){
 		raw_data[i]='\0';
 	}
-	for(int kol=0;kol<500;kol++){
+	int kol=0;
+	for(;;){
 		
 		emulator.get_command(command, command_size);			
 		
 		printf("Begin step\n");
-		int old_eip_pointer=emulator.get_register(reg);
+		uint old_eip_pointer=emulator.get_register(reg);
 		printf("EIP before=%d\n", old_eip_pointer);
 		bad_parse=emulator.step(); 
 		printf("EIP after=%d\n", emulator.get_register(reg));
@@ -991,6 +1028,7 @@ void PolyUnpack::DynamicAnalise(char* FileName, int key=0){
 			c++;
 			continue;
 		}
+		/*
 		if ((bytes)&&(key==1)){
 			for (i = 0; i < ((bytes) < (len) ? (bytes) : (len)); i++){
 				printf("%.2x", command[c + i]);
@@ -998,18 +1036,44 @@ void PolyUnpack::DynamicAnalise(char* FileName, int key=0){
 			printf("  ");
 			for (i = (bytes) < ((len) ? (bytes) : (len)); i < bytes*2 - len; i++)
 				printf(" ");
-			}
+		}
+		*/ 
 		inst_pointer=&inst;
 		get_instruction_string(inst_pointer, Format(FORMAT_INTEL), (DWORD)c, string, string_size);
-		if (key==1){
-			printf("%.8x  ", c);
-			printf("%s\n", string);
-			printf("Step Number=%d\n", kol);
-		}
-		flag=Compare(emulator, p, string, flag, offset);
+		
+		flag=Compare(emulator, p, string, flag, offset, old_eip_pointer);
+		
 		if(flag==-1){
-			printf("THIS IS VIRUS\n");
-			exit(101);
+			valid_file=false;
+			invalid_instr_kol++;
+			if(key==1){
+				printf("????????????????????????????????????????????????\n");
+				for (i = 0; i < ((bytes) < (len) ? (bytes) : (len)); i++){
+					printf("%.2x", command[c + i]);
+				}
+				printf("  ");
+				for (i = (bytes) < ((len) ? (bytes) : (len)); i < bytes*2 - len; i++)
+					printf(" ");
+				printf("%.8x  ", c);
+				printf("ILLEGAL = %s\n", string);
+				printf("Step Number=%d\n", kol);
+				printf("????????????????????????????????????????????????\n");
+			}
+			p=start;
+			//exit(101);
+		}
+		else {
+			if (key==1){
+				for (i = 0; i < ((bytes) < (len) ? (bytes) : (len)); i++){
+					printf("%.2x", command[c + i]);
+				}
+				printf("  ");
+				for (i = (bytes) < ((len) ? (bytes) : (len)); i < bytes*2 - len; i++)
+					printf(" ");
+				printf("%.8x  ", c);
+				printf("%s\n", string);
+				printf("Step Number=%d\n", kol);
+			}
 		}
 		if(!bad_parse)
 			emulator.jump(old_eip_pointer+len-0x20000000L);
@@ -1017,14 +1081,31 @@ void PolyUnpack::DynamicAnalise(char* FileName, int key=0){
 			string[i]='\0';
 		for (int i=0; i<command_size; i++)
 			command[i]='\0';
+		if(((p!=NULL)&&(p->padding))||(kol>=10000))
+			break;
+		kol++;
 	}
 	free (string);
+	
 	cout<<"***************"<<endl;
-	cout<<"This file is valid"<<endl;
+	if (valid_file){
+		cout<<"This file is valid"<<endl;
+		exit(0);
+	}
+	else{
+		cout<<"This is VIRUS"<<endl;
+		printf("Kol of invalid instructions=%d\n", invalid_instr_kol);
+		exit(1);
+	}
 	cout<<"***************"<<endl;
 }
 
-void PolyUnpack::FindInstruction(InstructionList* & p, int number){
+bool PolyUnpack::FindInstruction(InstructionList* & p, int number){
+	printf("Number=%d\n", number);
+	if (!is_valid(number)){
+		printf("Invalid Address!\n");
+		exit(1);
+	}
 	InstructionList* point=start;
 	while((point!=NULL)&&(point->number!=number)){
 		point=point->pointer;
@@ -1033,9 +1114,18 @@ void PolyUnpack::FindInstruction(InstructionList* & p, int number){
 	if(point==NULL){
 		printf("Number=%d\n", number);
 		printf("Instruction not found!\n May be because of unvalid jump.\n");
-		exit(1);
+		return false;
 	}
+	return true;
 }
+
+bool PolyUnpack:: is_valid(int number){
+	if ((number>=0)&&(number<=buf_size)){
+		return true;
+	}
+	return false;
+}
+
 
 bool compare(char* string1, const char* string2){
 	int i=0;
@@ -1045,6 +1135,41 @@ bool compare(char* string1, const char* string2){
 		i++;
 	}
 	return true;
+}
+
+int parse(char* string){
+	int i=0;
+	while(string[i]!=' ')
+		i++;
+	while(string[i]==' ')
+		i++;
+	return i;
+}
+
+void get_register_name(char* &  string, char* instruction){
+	int n=4;
+	int j=0;
+	int i=0;
+	string=(char*)malloc(sizeof(char)*4);
+	while(instruction[i]!='\0'){
+		if (j<n){
+			string[j]=instruction[i];
+		}
+		else{
+			n=n*2;
+			char* string2=(char*)malloc(sizeof(char)*n);
+			int k=0;
+			while(k<j){
+				string2[k]=string[k];
+				k++;
+			}
+			free(string);
+			string=string2;
+		}
+		j++;
+		i++;	
+	}
+	string[j]='\0';
 }
 
 int GetNumber(char* string){
@@ -1063,42 +1188,51 @@ int GetNumber(char* string){
 	return number;
 }
 
-int PolyUnpack::Compare(Emulator_LibEmu & emulator, InstructionList* &p, char* & command, int flag, int offset){
+int PolyUnpack::Compare(Emulator_LibEmu & emulator, InstructionList* &p, char* & command, int flag, int offset, uint old_eip){
+	printf("Compare Function\n");
 	int command_number=0; 
+	if(flag==-1){
+		if(!FindInstruction(p, old_eip-0x20000000L-offset)){
+			return -1;
+		}
+	}
 	if (flag==0){
-		printf("We are here!!! flag=0\n");
-		if (strcmp(p->pointer->instruction, command)==0){
+		//printf("We are here!!! flag=0\n");
+		if ((strcmp(p->pointer->instruction, command)==0)||
+			((compare(p->pointer->instruction, "jmp"))&&(compare(command, "jmp")))||
+			((compare(p->pointer->instruction, "call"))&&(compare(command,"call")))){
 			p=p->pointer;
-			printf(" INSTRUCTION=%s\n", p->instruction);
-			printf(" COMMAND=%s\n", command);
-			//p=p->pointer;
-			//return 1;
 		} 
 		else{
-			printf("Else brunch\n");
-			flag=Compare(emulator, p->pointer, command, 99, offset);
+			//printf("Else brunch\n");
+			flag=Compare(emulator, p->pointer, command, 99, offset, old_eip);
+			printf("FLAG=%d\n", flag);
+			printf("Instr=%s\n", p->instruction);
 			if (flag==-1){
-				int i=0;
-				while(p->instruction[i]!=' ')
-					i++;
-				while(p->instruction[i]==' ')
-					i++;
+				int i=parse(p->instruction);
 				int number=GetNumber(p->instruction+i+2);
-				FindInstruction(p, number);
+				if (!FindInstruction(p, number)){
+					return -1;
+				}
 			}
 			if ((flag==0)||(flag==2)||(flag==3)){
 				p=p->pointer;
-			}
+			} 
 		}
+	}
+	if (p==NULL){
+		return -1;
 	}
 	printf(" INSTRUCTION=%s\n", p->instruction);
 	printf(" COMMAND=%s\n", command);
 	if ((compare(p->instruction,"jz"))||(compare(p->instruction,"jnz"))||
 		(compare(p->instruction,"jns"))||(compare(p->instruction,"jmp"))||
 		(compare(p->instruction,"ja"))||(compare(p->instruction,"jna"))||
+		(compare(p->instruction,"jo"))||(compare(p->instruction,"jno"))||
 		(compare(p->instruction,"jnc"))||(compare(p->instruction,"jc"))||
 		(compare(p->instruction,"jl"))||(compare(p->instruction,"jnl"))||
 		(compare(p->instruction,"js"))||(compare(p->instruction,"jns"))||
+		(compare(p->instruction,"jecxz"))||
 		(compare(p->instruction,"jg"))||(compare(p->instruction,"jng"))){
 		if (((compare(p->instruction,"jz"))&&(!compare(command,"jz")))||
 			((compare(p->instruction,"jnz"))&&(!compare(command,"jnz")))||
@@ -1106,44 +1240,64 @@ int PolyUnpack::Compare(Emulator_LibEmu & emulator, InstructionList* &p, char* &
 			((compare(p->instruction,"jmp"))&&(!compare(command,"jmp")))||
 			((compare(p->instruction,"ja"))&&(!compare(command,"ja")))||
 			((compare(p->instruction,"jna"))&&(!compare(command,"jna")))||
+			((compare(p->instruction,"jo"))&&(!compare(command,"jo")))||
+			((compare(p->instruction,"jno"))&&(!compare(command,"jno")))||
 			((compare(p->instruction,"jc"))&&(!compare(command,"jc")))||
 			((compare(p->instruction,"jnc"))&&(!compare(command,"jnc")))||
 			((compare(p->instruction,"jl"))&&(!compare(command,"jl")))||
 			((compare(p->instruction,"js"))&&(!compare(command,"js")))||
 			((compare(p->instruction,"jns"))&&(!compare(command,"jns")))||
+			((compare(p->instruction,"jecxz"))&&(!compare(command,"jecxz")))||
 			((compare(p->instruction,"jg"))&&(!compare(command,"jg")))||
 			((compare(p->instruction,"jng"))&&(!compare(command,"jng")))){
 			return -1;
 		}	
-		int i=0;
-		while(p->instruction[i]!=' ')
-			i++;
-		while(p->instruction[i]==' ')
-			i++;
+		int i=parse(p->instruction);
 		if (p->instruction[i]=='['){
 			p=p->pointer;
 			return 1;
 		}
 		else{
+			if(compare(p->instruction, "jmp")){
+				int i=4;
+				if (p->instruction[i]=='0'){
+					int number=GetNumber(p->instruction+i+2);	
+					FindInstruction(p, number);
+				}
+				else{
+					char* string;
+					
+					get_register_name(string, p->instruction+i);
+					
+					int num=emulator.get_register(string);
+					printf("REGISTER BEFORE JUMP=%d\n", num);
+					if (!is_valid(num)){
+						exit(0);
+					}
+					if (!FindInstruction(p, num-0x20000000L-offset)){
+						return -1;
+					}
+					if (p!=NULL)
+						printf("%s\n", p->instruction);
+					free(string);
+				}
+				return 1;
+			}
 			return 0;
 		}
 	}
 	if (compare(p->instruction,"call")){
-		printf("We are in call section\n");
+		//printf("We are in call section\n");
 		if (!compare (command, "call")){
 			return -1;
 		}
-		int i=0;
-		while(p->instruction[i]!=' ')
-			i++;
-		while(p->instruction[i]==' ')
-			i++;
+		int i=parse(p->instruction);
 		if (p->instruction[i]=='['){
 			p=p->pointer;
 			return 1;
 		}
 		else{
-			if((p->pointer!=NULL)&&(flag!=99)){//
+			if((p->pointer!=NULL)&&(flag!=99)){
 				command_number=p->pointer->number;
 				return_addresses.Push(command_number);
 				printf("Future EIP=%d\n", command_number+offset+0x20000000L);
@@ -1151,54 +1305,48 @@ int PolyUnpack::Compare(Emulator_LibEmu & emulator, InstructionList* &p, char* &
 			else{
 				if(flag==99)
 					return 2;
-				printf("p->pointer==NULL\n");
-				//exit(1);
 			}
 			if ((p->instruction[i])=='0'){
 				int number=GetNumber(p->instruction+i+2);	
-				FindInstruction(p, number);
+				if(!FindInstruction(p, number)){
+					return -1;
+				}
 			}
 			else{
-				int n=4;
-				int j=0;
-				char* string=(char*)malloc(sizeof(char)*4);
-				while(p->instruction[i]!='\0'){
-					if (j<n){
-						string[j]=p->instruction[i];
-					}
-					else{
-						n=n*2;
-						char* string2=(char*)malloc(sizeof(char)*n);
-						int k=0;
-						while(k<j){
-							string2[k]=string[k];
-							k++;
-						}
-						free(string);
-						string=string2;
-					}
-					j++;
-					i++;	
-				}
-				string[j]='\0';
+				char* string;
+				get_register_name(string, p->instruction+i);
+				
 				int num=emulator.get_register(string);
-				printf("Register was found!!! ESI=%d\n", num);
-				FindInstruction(p, num);
-				printf("%s\n", p->instruction);
+				if (!is_valid(num)){
+					exit(0);
+				}
+				printf("REGISTER BEFORE JUMP=%d\n", num);
+				FindInstruction(p, num-0x20000000L);
+				
+				/*
+				if (!FindInstruction(p, num)){
+					return -1;
+				}
+				*/
+				
+				if (p!=NULL)
+					printf("%s\n", p->instruction);
 				free(string);
 			}
 			return 2;
 		}
 	}
 	else{
-		printf("WE ARE HERE\n");
+		//printf("WE ARE HERE\n");
 		if (strcmp(p->instruction, command)==0){
 			if (compare(p->instruction ,"ret")||compare(p->instruction,"retn")){
 				int temp;
 				if (flag!=99){
 					return_addresses.Pop(temp);
 					printf("Instruction Ret was found EIP=%d\n", temp+offset+0x20000000L);
-					FindInstruction(p, temp);
+					if (!FindInstruction(p, temp)){
+						return -1;
+					}
 					emulator.jump(temp+offset);
 				}
 				return 3;
